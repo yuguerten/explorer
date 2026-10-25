@@ -47,13 +47,41 @@ function FlowHandles() {
 function ComponentNode({ data, selected }: NodeProps) {
   const node = data.node as ArchitectureNode;
   const eyebrow = EYEBROW[node.component_type] ?? node.component_type;
+  const meta = nodeMeta(node);
   return (
-    <div className={`rf-node${selected ? " selected" : ""}`}>
+    <div className={`rf-node node-${node.component_type}${selected ? " selected" : ""}`}>
       <FlowHandles />
       <span className="node-type">{eyebrow}</span>
       <span className="node-label">{node.label}</span>
+      {meta && <span className="node-meta">{meta}</span>}
     </div>
   );
+}
+
+function nodeMeta(node: ArchitectureNode): string | null {
+  const value = (key: string) => node.config[key];
+  const number = (key: string) => typeof value(key) === "number" ? value(key) as number : null;
+  if (node.component_type === "embedding") return node.module_path === "wte" ? "learned token vectors" : "learned positions";
+  if (node.component_type === "attention") {
+    const heads = number("num_heads");
+    return heads ? `${heads} heads · causal mask` : "multi-head · causal mask";
+  }
+  if (node.component_type === "mlp") {
+    const hidden = number("hidden_size");
+    const inner = number("intermediate_size");
+    const factor = hidden && inner ? Math.round(inner / hidden) : 4;
+    return `${factor}× hidden · GELU`;
+  }
+  if (node.component_type === "layernorm") {
+    if (node.module_path?.endsWith("ln_1")) return "pre-attention";
+    if (node.module_path?.endsWith("ln_2")) return "pre-MLP";
+    return "output normalization";
+  }
+  if (node.component_type === "output") {
+    const vocab = number("vocab_size");
+    return vocab ? String(vocab.toLocaleString()) + "-way logits" : "vocabulary logits";
+  }
+  return null;
 }
 
 function AddNode({ selected }: NodeProps) {
@@ -68,16 +96,18 @@ function AddNode({ selected }: NodeProps) {
 function ContainerNode({ data, selected }: NodeProps) {
   const node = data.node as ArchitectureNode;
   const isGroup = node.component_type === "group";
+  const isBlock = node.component_type === "block";
   return (
     <div
-      className={`container-panel${selected ? " selected" : ""}${isGroup ? " group" : ""}`}
+      className={`container-panel${selected ? " selected" : ""}${isGroup ? " group" : ""}${isBlock ? " block" : ""}`}
       style={{ width: "100%", height: "100%" }}
     >
       <div className="container-panel-head">
         <span className="container-title">
           {node.label}
-          {node.repetition != null && <span className="node-count">×{node.repetition}</span>}
+          {isGroup ? <span className="group-subtitle">N = 12, 24, 36, 48</span> : node.repetition != null && <span className="node-count">×{node.repetition}</span>}
         </span>
+        {isGroup && node.repetition != null && <span className="group-current">current N = {node.repetition}</span>}
       </div>
       <FlowHandles />
     </div>
@@ -85,17 +115,19 @@ function ContainerNode({ data, selected }: NodeProps) {
 }
 
 function RoutedEdge({ id, data, style, markerEnd }: EdgeProps) {
-  const junction = data?.junction as { x: number; y: number } | undefined;
+  const junction = data?.junction as { x: number; y: number; label?: string | null; title?: string } | undefined;
+  const label = data?.label as { x: number; y: number } | undefined;
   return (
     <>
       <BaseEdge id={id} path={data?.path as string} style={style} markerEnd={markerEnd} />
       {junction && (
         <g className="flow-input-junction" pointerEvents="none">
-          <title>Block input x: the residual stream before LayerNorm 1</title>
-          <circle cx={junction.x} cy={junction.y} r={3.2} fill="#1c1a17" />
-          <text x={junction.x + 9} y={junction.y - 5} fill="#1c1a17" fontSize={11} fontFamily="var(--mono)">x</text>
+          <title>{junction.title ?? "Residual stream branch"}</title>
+          <circle cx={junction.x} cy={junction.y} r={3.2} fill="var(--ink)" />
+          {junction.label && <text x={junction.x + 9} y={junction.y - 5} fill="var(--ink)" fontSize={11} fontFamily="var(--mono)">{junction.label}</text>}
         </g>
       )}
+      {label && <text className="residual-label" x={label.x} y={label.y} pointerEvents="none">residual</text>}
     </>
   );
 }
@@ -191,7 +223,8 @@ export function ArchitecturePanel({
       let path: string;
       // Frames continue the same stream; only computational targets need an arrowhead.
       let marker = !isContainerType(target.node.component_type);
-      let junction: { x: number; y: number } | undefined;
+      let junction: { x: number; y: number; label?: string | null; title?: string } | undefined;
+      let edgeLabel: { x: number; y: number } | undefined;
 
       if (output) {
         // Leaving a containing frame is a continuation, not a return arrow.
@@ -201,16 +234,22 @@ export function ArchitecturePanel({
         const first = nodes.filter((n) => n.node.parent_id === source.node.id && !isContainerType(n.node.component_type))
           .sort((a, b) => a.y - b.y)[0];
         const entryY = (first?.y ?? source.y + 34) - 13;
-        const railX = (first?.x ?? target.x) - 55;
+        const siblings = nodes.filter((n) => n.node.parent_id === source.node.id && !isContainerType(n.node.component_type));
+        const railX = Math.max(...siblings.map((n) => n.x + n.w)) + 72;
         const targetY = target.y + target.h / 2;
-        junction = { x: tx, y: entryY };
-        path = "M " + tx + " " + entryY + " H " + railX + " V " + targetY + " H " + target.x;
+        junction = { x: tx, y: entryY, label: "x", title: "Block input x, before LayerNorm 1" };
+        edgeLabel = { x: railX + 8, y: (entryY + targetY) / 2 };
+        path = "M " + tx + " " + entryY + " H " + railX + " V " + targetY + " H " + (target.x + target.w);
       } else if (residual) {
         // The second bypass travels beside LayerNorm/MLP, never through them.
         const siblings = nodes.filter((n) => n.node.parent_id === source.node.parent_id && !isContainerType(n.node.component_type));
-        const railX = Math.max(...siblings.map((n) => n.x + n.w)) + 55;
-        path = "M " + (source.x + source.w) + " " + (source.y + source.h / 2) +
-          " H " + railX + " V " + (target.y + target.h / 2) + " H " + (target.x + target.w);
+        const railX = Math.max(...siblings.map((n) => n.x + n.w)) + 38;
+        const startX = source.x + source.w / 2;
+        const startY = source.y + source.h + 4;
+        const targetY = target.y + target.h / 2;
+        junction = { x: startX, y: startY, label: null, title: "Residual stream after the attention add; bypasses LayerNorm 2 and the MLP" };
+        edgeLabel = { x: railX + 8, y: (startY + targetY) / 2 };
+        path = "M " + startX + " " + startY + " H " + railX + " V " + targetY + " H " + (target.x + target.w);
       } else if (target.node.parent_id === source.node.id) {
         // Draw the input down from the group boundary through the clear center
         // of both headers, rather than routing from the container's midpoint.
@@ -228,7 +267,7 @@ export function ArchitecturePanel({
           offset: 10,
         });
       }
-      const color = residual ? "#a63d2f" : "#1c1a17";
+      const color = residual ? "var(--residual)" : "var(--wire)";
       return [{
         id: "e-" + i,
         source: e.source,
@@ -236,9 +275,9 @@ export function ArchitecturePanel({
         sourceHandle: "source-bottom",
         targetHandle: "target-top",
         type: "architecture",
-        data: { path, junction },
+        data: { path, junction, label: edgeLabel },
         zIndex: 1,
-        style: { stroke: color, strokeWidth: residual ? 1.8 : 1.5, strokeDasharray: residual ? "6 4" : undefined },
+        style: { stroke: color, strokeWidth: residual ? 1.7 : 1.5 },
         markerEnd: marker ? { type: "arrowclosed", width: 12, height: 12, color } : undefined,
       } as Edge];
     });

@@ -8,6 +8,12 @@
   --accent: #a63d2f;
   --accent-soft: rgba(166, 61, 47, 0.12);
   --selection: rgba(166, 61, 47, 0.2);
+  --wire: #817d73;
+  --residual: #8b7659;
+  --attention: #544395;
+  --attention-soft: #eeeafa;
+  --mlp: #126a58;
+  --mlp-soft: #e3f1ec;
   --serif: "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
   --sans: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --mono: "SFMono-Regular", ui-monospace, "JetBrains Mono", Menlo, monospace;
@@ -436,7 +442,7 @@ button {
 
 .rf-node .node-label {
   display: block;
-  font-family: var(--serif);
+  font-family: var(--sans);
   font-size: 13px;
   font-weight: 600;
   color: var(--ink);
@@ -468,15 +474,47 @@ button {
   background: #fbf4ec;
 }
 
-.rf-node .node-type {
+ .rf-node .node-type {
   display: block;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--ink-muted);
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
+
+.rf-node .node-meta {
+  display: block;
+  margin-top: 1px;
+  color: var(--ink-muted);
+  font-family: var(--sans);
+  font-size: 10px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.rf-node.node-attention {
+  border-color: #8275bd;
+  background: var(--attention-soft);
+}
+.rf-node.node-attention .node-type { color: var(--attention); }
+.rf-node.node-attention .node-label { color: #3d317b; }
+.rf-node.node-attention.selected { border-color: var(--attention); box-shadow: 0 0 0 2px rgba(84, 67, 149, 0.18); }
+
+.rf-node.node-mlp {
+  border-color: #5c9a88;
+  background: var(--mlp-soft);
+}
+.rf-node.node-mlp .node-type { color: var(--mlp); }
+.rf-node.node-mlp .node-label { color: #145342; }
+.rf-node.node-mlp.selected { border-color: var(--mlp); box-shadow: 0 0 0 2px rgba(18, 106, 88, 0.18); }
+
+.rf-node.node-output {
+  border-color: #9a8b70;
+  background: #f1ede2;
+}
+.rf-node.node-output .node-type { color: #756344; }
 
 .rf-node.group-node {
   border-style: dashed;
@@ -518,17 +556,23 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-color: var(--accent);
-  border-width: 2px;
-  background: #fbf4ec;
+  border-color: var(--residual);
+  border-width: 1.5px;
+  background: var(--paper);
   cursor: pointer;
 }
 
 .rf-node.add-node .add-glyph {
   font-size: 18px;
-  color: var(--accent);
+  color: var(--residual);
   font-weight: 600;
   line-height: 1;
+}
+
+.residual-label {
+  fill: var(--ink-muted);
+  font-family: var(--sans);
+  font-size: 10px;
 }
 
 /* Container panels (model / block / group) */
@@ -542,6 +586,41 @@ button {
   flex-direction: column;
   cursor: pointer;
   box-shadow: none;
+}
+
+ .container-panel.group {
+  border-style: dashed;
+  border-color: var(--hairline);
+  background: transparent;
+}
+
+.container-panel.group .container-panel-head {
+  height: 46px;
+}
+
+.container-panel.block .container-panel-head {
+  border-bottom: 0;
+}
+
+.container-panel.group .container-title {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 0;
+}
+
+.group-subtitle {
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.group-current {
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  white-space: nowrap;
 }
 
 .container-panel.selected {
@@ -666,6 +745,38 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 10px 20px;
   margin: 12px 0 0;
+}
+
+.details-code-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.details-code-links > span {
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 2px;
+}
+
+.details-code-links button {
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.details-code-links button:hover,
+.details-code-links button:focus-visible {
+  border-color: var(--ink);
+  outline: none;
 }
 
 .details-grid dt {

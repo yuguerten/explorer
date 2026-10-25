@@ -60,14 +60,17 @@ export default function App() {
       if (result) {
         const ref = result.source_references.find((s) => s.id === refId);
         if (ref && ref.architecture_node_ids.length > 0) {
-          setSelectedNodeId(ref.architecture_node_ids[0]);
+          const linkedNodeId = selectedNodeId && ref.architecture_node_ids.includes(selectedNodeId)
+            ? selectedNodeId
+            : ref.architecture_node_ids[0];
+          setSelectedNodeId(linkedNodeId);
         }
       }
       requestAnimationFrame(() => {
         programmatic.current = false;
       });
     },
-    [result]
+    [result, selectedNodeId]
   );
 
   const selectedNode: ArchitectureNode | null = result
@@ -181,7 +184,7 @@ function Workspace({
         />
         {selectedNode && (
           <aside className="details" aria-label="Component details">
-            <DetailsPanel node={selectedNode} refMeta={selectedRef} result={result} onClose={onClearSelection} />
+            <DetailsPanel node={selectedNode} refMeta={selectedRef} result={result} onClose={onClearSelection} onJumpToRef={onJumpToRef} />
           </aside>
         )}
       </div>

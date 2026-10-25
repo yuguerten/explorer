@@ -5,7 +5,7 @@ import inspect
 from typing import Optional
 
 import torch
-from transformers import AutoConfig, AutoModel
+from transformers import AutoConfig, AutoModelForCausalLM
 
 import adapters
 from .inspector import collect_source_file, collect_symbol_reference, method_line_range
@@ -19,7 +19,7 @@ from .models import (
 # GPT-2 module-level classes to inspect and expose as source files. We inspect
 # the base GPT2Model implementation so repeated blocks, attention and MLP share
 # a single source reference that maps to multiple nodes.
-_INSPECT_SYMBOLS = ["GPT2Model", "GPT2Block", "GPT2Attention", "GPT2MLP", "LayerNorm"]
+_INSPECT_SYMBOLS = ["GPT2LMHeadModel", "GPT2Model", "GPT2Block", "GPT2Attention", "GPT2MLP", "LayerNorm"]
 
 
 def _package_version(pkg: str) -> Optional[str]:
@@ -45,7 +45,7 @@ def inspect_model(model_id: str, revision: Optional[str] = None) -> InspectionRe
 
     # --- build model on meta device (no weight allocation) ---
     with torch.device("meta"):
-        model = AutoModel.from_config(config)
+        model = AutoModelForCausalLM.from_config(config)
 
     adapter = adapters.get_adapter(family)
     if adapter is None:
@@ -109,6 +109,9 @@ def inspect_model(model_id: str, revision: Optional[str] = None) -> InspectionRe
             forward_ref.source_file_id = cls_ref.source_file_id
             source_refs[key] = forward_ref
 
+    _add_torch_embedding_source(source_files, source_refs)
+    _add_embedding_callsite_references(source_refs, source_files)
+
     # --- build graph via adapter ---
     nodes, edges, adapter_unsupported = adapter.build(config, model, list(source_refs.values()))
     unsupported.extend(adapter_unsupported)
@@ -152,6 +155,65 @@ def inspect_model(model_id: str, revision: Optional[str] = None) -> InspectionRe
         parameter_count=total_params,
         warnings=warnings,
     )
+
+
+def _add_torch_embedding_source(
+    source_files: dict[str, SourceFile],
+    source_refs: dict[str, SourceReference],
+) -> None:
+    """Expose PyTorch Embedding.forward alongside the GPT-2 call sites."""
+    embedding_class = torch.nn.Embedding
+    source_file = collect_source_file(embedding_class, _package_version("torch"))
+    if source_file is None:
+        return
+    source_files[source_file.file_id] = source_file
+    class_ref = collect_symbol_reference(embedding_class, source_file)
+    if class_ref is None:
+        return
+    class_ref.source_file_id = source_file.file_id
+    source_refs["class:Embedding"] = class_ref
+    try:
+        module_ast = ast.parse(source_file.content)
+    except SyntaxError:
+        module_ast = None
+    forward_ref = _method_ref(embedding_class, class_ref, "forward", module_ast)
+    if forward_ref is not None:
+        forward_ref.source_file_id = source_file.file_id
+        source_refs["method:Embedding:forward"] = forward_ref
+
+
+def _add_embedding_callsite_references(
+    source_refs: dict[str, SourceReference],
+    source_files: dict[str, SourceFile],
+) -> None:
+    """Create precise source anchors for GPT-2 input embedding lookups."""
+    forward_ref = source_refs.get("method:GPT2Model:forward")
+    if forward_ref is None:
+        return
+    source_file = source_files.get(forward_ref.source_file_id)
+    if source_file is None:
+        return
+    call_sites = {
+        "wte": "self.wte(input_ids)",
+        "wpe": "self.wpe(position_ids)",
+    }
+    lines = source_file.content.splitlines()
+    for path, expression in call_sites.items():
+        line_number = next((i for i, line in enumerate(lines, 1) if expression in line), None)
+        if line_number is None:
+            continue
+        key = "call:GPT2Model:" + path
+        source_refs[key] = SourceReference(
+            id="ref:" + key,
+            source_file_id=source_file.file_id,
+            symbol="GPT2Model",
+            method="forward",
+            start_line=max(1, line_number - (5 if path == "wpe" else 1)),
+            end_line=line_number + (1 if path == "wpe" else 0),
+            granularity="callsite",
+            architecture_node_ids=[],
+            origin="adapter-callsite",
+        )
 
 
 def _resolve_class(model, name: str):
@@ -206,14 +268,23 @@ def _assign_source_links(nodes: list[ArchitectureNode], source_refs: dict[str, S
         refs: list[str] = []
         # Map by component_type to symbol name
         type_to_symbol = {
-            "model": "GPT2Model",
+            "embedding": "GPT2Model",
             "block": "GPT2Block",
             "attention": "GPT2Attention",
             "mlp": "GPT2MLP",
             "layernorm": "LayerNorm",
+            "output": "GPT2LMHeadModel",
         }
-        sym = type_to_symbol.get(node.component_type)
-        if sym:
+        sym = node.label if node.component_type == "model" else type_to_symbol.get(node.component_type)
+        if node.component_type == "embedding":
+            call_key = "call:GPT2Model:" + str(node.module_path)
+            if call_key in source_refs:
+                refs.append(source_refs[call_key].id)
+            elif "method:GPT2Model:forward" in source_refs:
+                refs.append(source_refs["method:GPT2Model:forward"].id)
+            if "method:Embedding:forward" in source_refs:
+                refs.append(source_refs["method:Embedding:forward"].id)
+        elif sym:
             cls_key = "class:" + sym
             method_key = "method:" + sym + ":forward"
             if method_key in source_refs:

@@ -80,9 +80,12 @@ export function SourcePanel({
   );
 
   useEffect(() => {
-    if (selectedRef && activeFile && selectedRef.source_file_id === activeFile.file_id) {
-      highlightRange(selectedRef);
+    if (!selectedRef) return;
+    if (selectedRef.source_file_id !== activeFile?.file_id) {
+      setActiveFileId(selectedRef.source_file_id);
+      return;
     }
+    if (activeFile) highlightRange(selectedRef);
   }, [selectedRef, activeFile, highlightRange]);
 
   // Apply decorations for mapped ranges whenever file/selection changes.

@@ -61,6 +61,8 @@ class Gpt2Adapter:
         # --- model root ---
         model_cls = type(model).__name__
         model_refs = ref_by_class.get(model_cls, [])
+        transformer = getattr(model, "transformer", None)
+        base_model = transformer if transformer is not None and hasattr(transformer, "wte") else model
         model_count = sum(1 for p in model.parameters())
         add(
             ArchitectureNode(
@@ -77,7 +79,7 @@ class Gpt2Adapter:
 
         # --- embeddings (wte, wpe) ---
         for emb_path, emb_label in (("wte", "Token Embedding"), ("wpe", "Position Embedding")):
-            emb_mod = self._get_module(model, emb_path)
+            emb_mod = self._get_module(base_model, emb_path)
             if emb_mod is None:
                 unsupported.append(f"missing {emb_path}")
                 continue
@@ -102,15 +104,15 @@ class Gpt2Adapter:
         # --- repeated transformer blocks group ---
         n_layer = getattr(config, "n_layer", None)
         block_mod = None
-        if hasattr(model, "h") and len(model.h) > 0:
-            block_mod = model.h[0]
+        if hasattr(base_model, "h") and len(base_model.h) > 0:
+            block_mod = base_model.h[0]
         block_refs = ref_by_class.get(type(block_mod).__name__ if block_mod else "GPT2Block", [])
 
         block_group_id = "group:h"
         add(
             ArchitectureNode(
                 id=block_group_id,
-                label="Transformer Blocks",
+                label="Transformer block × N",
                 component_type="group",
                 parent_id=self._node_id(""),
                 repetition=n_layer,
@@ -126,13 +128,13 @@ class Gpt2Adapter:
         # first block in full detail; the remaining blocks are summarized by the
         # group repetition count (kept compact per spec).
         first_block_idx = 0
-        n_blocks = len(model.h) if hasattr(model, "h") else 0
+        n_blocks = len(base_model.h) if hasattr(base_model, "h") else 0
         for idx in range(min(n_blocks, 1)):
-            self._build_block(model, idx, block_group_id, block_refs, edges, add, add_edge, ref_by_class)
+            self._build_block(base_model, idx, block_group_id, block_refs, edges, add, add_edge, ref_by_class)
 
         # --- final layernorm ---
-        if hasattr(model, "ln_f"):
-            ln_f = model.ln_f
+        if hasattr(base_model, "ln_f"):
+            ln_f = base_model.ln_f
             ln_refs = ref_by_class.get("LayerNorm", [])
             add(
                 ArchitectureNode(
@@ -150,15 +152,21 @@ class Gpt2Adapter:
 
         # --- lm head for LM head models ---
         if hasattr(model, "lm_head") or hasattr(model, "transformer") and hasattr(getattr(model, "transformer", None), "wte"):
+            head = getattr(model, "lm_head", None)
+            token_embedding = self._get_module(base_model, "wte")
+            tied_head = head is not None and token_embedding is not None and head.weight is token_embedding.weight
             add(
                 ArchitectureNode(
                     id=self._node_id("lm_head"),
-                    label="LM Head",
+                    label="Linear (tied to wte)" if tied_head else "LM Head",
                     component_type="output",
                     module_path="lm_head",
                     parent_id=self._node_id(""),
                     source_reference_ids=[],
-                    config={"vocab_size": getattr(config, "vocab_size", None)},
+                    config={
+                        "vocab_size": getattr(config, "vocab_size", None),
+                        "tied_to_embedding": tied_head,
+                    },
                 )
             )
             add_edge(self._node_id("ln_f"), self._node_id("lm_head"), "tensor-flow")
@@ -214,7 +222,7 @@ class Gpt2Adapter:
         add(
             ArchitectureNode(
                 id=attn_id,
-                label="Self-Attention",
+                label="Masked Self-Attention",
                 component_type="attention",
                 module_path=f"{path}.attn",
                 parent_id=block_id,
@@ -224,6 +232,7 @@ class Gpt2Adapter:
                     "head_dim": getattr(model.config, "n_embd", None) // getattr(model.config, "n_head", 1)
                     if getattr(model.config, "n_head", 1)
                     else None,
+                    "hidden_size": getattr(model.config, "n_embd", None),
                 },
                 parameter_count=sum(p.numel() for p in attn_mod.parameters()) if attn_mod else None,
             )
@@ -267,11 +276,16 @@ class Gpt2Adapter:
         add(
             ArchitectureNode(
                 id=mlp_id,
-                label="MLP",
+                label="Feed-Forward (MLP)",
                 component_type="mlp",
                 module_path=f"{path}.mlp",
                 parent_id=block_id,
                 source_reference_ids=ref_by_class.get(mlp_type, []),
+                config={
+                    "hidden_size": getattr(model.config, "n_embd", None),
+                    "intermediate_size": getattr(model.config, "n_inner", None) or getattr(model.config, "n_embd", 0) * 4,
+                    "activation": getattr(model.config, "activation_function", "GELU"),
+                },
                 parameter_count=sum(p.numel() for p in mlp_mod.parameters()) if mlp_mod else None,
             )
         )

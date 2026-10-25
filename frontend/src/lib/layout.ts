@@ -30,14 +30,15 @@ import type { ArchitectureEdge, ArchitectureNode } from "../types";
  */
 
 const NODE_W = 190;
-const NODE_H = 50;
-const ROW_GAP = 26;
-const ADD_SIZE = 38;
-const EMB_GAP = 40;
+const NODE_H = 60;
+const ROW_GAP = 16;
+const ADD_SIZE = 36;
+const EMB_GAP = 32;
 const MODEL_H = 40;
 const HEADER_H = 34;
+const GROUP_HEADER_H = 46;
 const CONTAINER_PAD = 10;
-const SECTION_GAP = 30;
+const SECTION_GAP = 22;
 
 export interface LayoutNode {
   node: ArchitectureNode;
@@ -165,18 +166,18 @@ export function layoutDecoder(
     const gy = cursorY;
     const block = (childrenOf.get(group.id) ?? []).find((c) => c.component_type === "block");
 
-    let innerBottom = gy + HEADER_H;
+    let innerBottom = gy + GROUP_HEADER_H;
     if (block) {
       const blockKids = childrenOf.get(block.id) ?? [];
-      cursorY = gy + HEADER_H * 2 + ROW_GAP;
+      cursorY = gy + GROUP_HEADER_H + HEADER_H + ROW_GAP;
       const mainX = (W - NODE_W) / 2;
       const bottom = placeContentColumn(blockKids, mainX);
       // block panel wraps its children
       const bp: Pos = {
         x: gx + CONTAINER_PAD,
-        y: gy + HEADER_H,
+        y: gy + GROUP_HEADER_H,
         w: gw - CONTAINER_PAD * 2,
-        h: bottom - (gy + HEADER_H) + ROW_GAP,
+        h: bottom - (gy + GROUP_HEADER_H) + ROW_GAP,
       };
       pos.set(block.id, bp);
       placed.add(block.id);
