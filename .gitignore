@@ -1,0 +1,19 @@
+# Local environments and dependencies
+.venv/
+node_modules/
+frontend/node_modules/
+
+# Build output and compiler caches
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+__pycache__/
+*.py[cod]
+
+# Local configuration and visual captures
+.env
+.env.*
+!.env.example
+*.png
+.playwright-mcp/

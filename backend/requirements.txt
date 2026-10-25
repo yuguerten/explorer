@@ -1,0 +1,10 @@
+# Core runtime deps for the explorer backend.
+# Install CPU-only torch from the PyPI CPU index (keeps the venv small):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+transformers>=4.40
+torch>=2.2
+safetensors>=0.4
+numpy
